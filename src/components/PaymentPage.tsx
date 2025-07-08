@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -16,6 +16,7 @@ import {
   Phone
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
+import { supabase } from "@/integrations/supabase/client";
 
 interface PaymentPageProps {
   onGoToHome: () => void;
@@ -26,22 +27,76 @@ export const PaymentPage = ({ onGoToHome }: PaymentPageProps) => {
   const [generatedCode, setGeneratedCode] = useState<string | null>(null);
   const { toast } = useToast();
 
-  // Simulate payment processing and code generation
+  // Check for successful payment on page load
+  useEffect(() => {
+    const urlParams = new URLSearchParams(window.location.search);
+    const success = urlParams.get('success');
+    const sessionId = urlParams.get('session_id');
+    
+    if (success === 'true' && sessionId && !generatedCode) {
+      verifyPaymentAndGetCode(sessionId);
+    }
+  }, [generatedCode]);
+
+  // Verify payment and get license code
+  const verifyPaymentAndGetCode = async (sessionId: string) => {
+    try {
+      setIsProcessing(true);
+      
+      const { data, error } = await supabase.functions.invoke('verify-payment', {
+        body: { session_id: sessionId }
+      });
+
+      if (error) throw error;
+
+      if (data.success) {
+        setGeneratedCode(data.license_code);
+        toast({
+          title: "Payment Successful!",
+          description: "Your license code has been generated. Save it securely.",
+        });
+        
+        // Clean up URL parameters
+        window.history.replaceState({}, document.title, window.location.pathname);
+      } else {
+        throw new Error(data.error || 'Payment verification failed');
+      }
+    } catch (error) {
+      console.error('Payment verification error:', error);
+      toast({
+        title: "Payment Verification Failed",
+        description: "Please contact support with your session ID.",
+        variant: "destructive"
+      });
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  // Handle payment button click
   const handlePayment = async () => {
-    setIsProcessing(true);
-    
-    // Simulate payment processing
-    await new Promise(resolve => setTimeout(resolve, 2000));
-    
-    // Generate a mock license code
-    const code = `SH-${Math.random().toString(36).substring(2, 8).toUpperCase()}-${Date.now().toString().slice(-6)}`;
-    setGeneratedCode(code);
-    setIsProcessing(false);
-    
-    toast({
-      title: "Payment Successful!",
-      description: "Your license code has been generated. Save it securely.",
-    });
+    try {
+      setIsProcessing(true);
+      
+      const { data, error } = await supabase.functions.invoke('create-payment');
+      
+      if (error) throw error;
+      
+      if (data.url) {
+        // Redirect to Stripe Checkout
+        window.location.href = data.url;
+      } else {
+        throw new Error('No checkout URL received');
+      }
+    } catch (error) {
+      console.error('Payment error:', error);
+      toast({
+        title: "Payment Error",
+        description: "Failed to initiate payment. Please try again.",
+        variant: "destructive"
+      });
+      setIsProcessing(false);
+    }
   };
 
   const copyCode = () => {
